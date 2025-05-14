@@ -1,0 +1,1678 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ICU護理師排班工具</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .table-cell-content { min-height: 80px; position: relative; }
+        .day-header { background-color: #f3f4f6; }
+        .weekend { background-color: #f3f4f6; }
+        .national-holiday { background-color: #fef3c7; }
+        .weekend.national-holiday { background-color: #fef3c7; }
+        .today { border: 2px solid #3b82f6; }
+
+        .nurse-tag { /* Renamed from doctor-tag */
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.8em;
+            margin: 2px;
+            cursor: pointer;
+        }
+        .D-shift { background-color: #e0f2fe; color: #0c4a6e; } /* Light Blue for Day */
+        .E-shift { background-color: #ffedd5; color: #9a3412; } /* Orange for Evening */
+        .N-shift { background-color: #334155; color: #f1f5f9; } /* Dark Blue-Gray for Night */
+        .unassigned-shift { background-color: #fee2e2; color: #991b1b; font-weight: bold; }
+        
+        .unassigned-reason-icon {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            line-height: 14px;
+            text-align: center;
+            font-size: 10px;
+            font-weight: bold;
+            color: #7f1d1d;
+            background-color: #fecaca;
+            border: 1px solid #ef4444;
+            border-radius: 50%;
+            cursor: help;
+            margin-left: 4px;
+            vertical-align: middle;
+        }
+
+        .modal {
+            display: none; position: fixed; z-index: 1000;
+            left: 0; top: 0; width: 100%; height: 100%;
+            overflow: auto; background-color: rgba(0,0,0,0.4);
+        }
+        .modal-content {
+            background-color: #fefefe; margin: 3% auto; padding: 20px;
+            border: 1px solid #888; width: 90%; max-width: 650px; /* Adjusted width */
+            border-radius: 8px;
+            position: relative;
+        }
+        .close-button {
+            color: #aaa; float: right; font-size: 28px; font-weight: bold;
+        }
+        .close-button:hover, .close-button:focus {
+            color: black; text-decoration: none; cursor: pointer;
+        }
+
+        #miniCalendarContainer { /* Keep for days off */
+            display:grid; grid-template-columns:repeat(7,1fr); gap:4px; text-align:center;
+        }
+        .calendar-header{grid-column:span 7; text-align:center; font-weight:bold; margin-bottom:10px; font-size:1.1em;}
+        .calendar-day-name{font-size:0.8em; color:#6b7280; padding-bottom:5px;}
+        .calendar-day{padding:8px 4px; border:1px solid #e5e7eb; border-radius:4px; cursor:pointer; font-size:0.9em; position:relative;}
+        .calendar-day:hover{background:#f0f0f0;}
+        .calendar-day.empty{background:#f9fafb; cursor:default;}
+        .calendar-day.selected{background:#3b82f6; color:white;}
+        .calendar-day.is-weekend{background:#f3f4f6;}
+        .calendar-day.is-national-holiday{background:#fef9c3;}
+        .calendar-day.is-weekend.is-national-holiday{background:#fef9c3;}
+        .calendar-day.selected.is-national-holiday{background:#3b82f6; color:white;}
+        
+        .nurse-swap-dropdown { /* Renamed from doctor-swap-dropdown */
+            position:absolute; background:#fff; border:1px solid #ccc; box-shadow:0 2px 10px rgba(0,0,0,0.1); z-index:1005; max-height:200px; overflow-y:auto; border-radius:4px;
+        }
+        .nurse-swap-dropdown div {
+            padding:8px 12px; cursor:pointer; font-size:0.9em;
+        }
+        .nurse-swap-dropdown div:hover {
+            background:#f0f0f0;
+        }
+        #unassignedReasonModal .modal-content{max-width:500px; max-height:70vh; overflow-y:auto;}
+        #unassignedReasonList li{padding:4px 0; border-bottom:1px dashed #eee;}
+        #unassignedReasonList li:last-child{border:none;}
+    </style>
+</head>
+<body class="bg-gray-100 p-4 md:p-8">
+    <div class="container mx-auto bg-white shadow-xl rounded-lg p-6">
+        <header class="mb-8 text-center border-b pb-4">
+            <div class="flex justify-center items-center space-x-4">
+                <img src="https://upload.wikimedia.org/wikipedia/zh/thumb/c/c7/Taipei_Medical_University_Hospital_logo.svg/1200px-Taipei_Medical_University_Hospital_logo.svg.png"
+                     alt="TMUH Logo"
+                     class="h-16 w-16 object-contain rounded-full"
+                     onerror="this.onerror=null; this.src='https://placehold.co/64x64/ccc/333?text=Logo';">
+                <div>
+                    <h1 class="text-3xl font-bold text-blue-700">ICU護理師排班工具</h1>
+                    <p class="text-gray-600 mt-1">TMUH ICU Nurse Scheduling Assistant</p>
+                    <p class="text-sm text-gray-500 mt-1">作者: 陳紹鈞, Gemini</p>
+                </div>
+            </div>
+        </header>
+
+        <section id="settings-panel" class="mb-8 p-6 bg-gray-50 rounded-lg shadow">
+            <h2 class="text-2xl font-semibold mb-6 text-gray-700 border-b pb-2">排班設定</h2>
+
+            <div class="grid md:grid-cols-2 gap-6 mb-6">
+                <div>
+                    <label for="year-select" class="block text-sm font-medium text-gray-700 mb-1">年份:</label>
+                    <select id="year-select" class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500">
+                    </select>
+                </div>
+                <div>
+                    <label for="month-select" class="block text-sm font-medium text-gray-700 mb-1">月份:</label>
+                    <select id="month-select" class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500">
+                    </select>
+                </div>
+            </div>
+
+            <div class="mb-6 border-t pt-4">
+                <h3 class="text-lg font-medium text-gray-700 mb-2">每班最少人數設定:</h3>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <label for="minNursesD" class="block text-sm font-medium text-gray-700">D班 (08-16):</label>
+                        <input type="number" id="minNursesD" value="2" min="1" class="mt-1 w-full p-2 border border-gray-300 rounded-md shadow-sm">
+                    </div>
+                    <div>
+                        <label for="minNursesE" class="block text-sm font-medium text-gray-700">E班 (16-00):</label>
+                        <input type="number" id="minNursesE" value="2" min="1" class="mt-1 w-full p-2 border border-gray-300 rounded-md shadow-sm">
+                    </div>
+                    <div>
+                        <label for="minNursesN" class="block text-sm font-medium text-gray-700">N班 (00-08):</label>
+                        <input type="number" id="minNursesN" value="2" min="1" class="mt-1 w-full p-2 border border-gray-300 rounded-md shadow-sm">
+                    </div>
+                </div>
+                 <p class="text-xs text-gray-500 mt-2">隱藏規則：每班必須有 1 位 Leader 或 2 位 小Leader。</p>
+            </div>
+
+
+            <div class="flex flex-wrap gap-4 mb-6">
+                <button id="saveSettingsBtn" class="bg-sky-500 hover:bg-sky-600 text-white font-semibold py-2 px-4 rounded-md shadow">
+                    儲存設定
+                </button>
+                <button id="loadSettingsBtn" class="bg-slate-500 hover:bg-slate-600 text-white font-semibold py-2 px-4 rounded-md shadow">
+                    載入設定
+                </button>
+                 <button id="clearSavedSettingsBtn" class="bg-rose-500 hover:bg-rose-600 text-white font-semibold py-2 px-4 rounded-md shadow">
+                    清除已存設定
+                </button>
+                <button id="exportCsvBtn" class="bg-emerald-500 hover:bg-emerald-600 text-white font-semibold py-2 px-4 rounded-md shadow">
+                    匯出CSV (Excel)
+                </button>
+            </div>
+
+            <div class="mb-6">
+                <button id="addNurseBtn" class="bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded-md shadow focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50">
+                    新增護理師
+                </button>
+            </div>
+
+            <div id="nurses-list" class="space-y-4 mb-6"> </div>
+
+            <button id="generate-schedule-btn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-lg shadow-md transition duration-150 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-opacity-50">
+                產生班表
+            </button>
+        </section>
+
+        <section id="schedule-display-container" class="mb-8">
+            <h2 class="text-2xl font-semibold mb-4 text-gray-700">護理師班表</h2>
+            <div id="schedule-display" class="overflow-x-auto bg-white p-4 rounded-lg shadow">
+            </div>
+        </section>
+
+        <section id="summary-panel-container">
+            <h2 class="text-2xl font-semibold mb-4 text-gray-700">護理師排班統計</h2>
+            <div id="summary-panel" class="overflow-x-auto bg-white p-4 rounded-lg shadow">
+            </div>
+        </section>
+    </div>
+
+    <div id="nurseModal" class="modal"> <div class="modal-content">
+            <span class="close-button" onclick="closeNurseModal()">&times;</span>
+            <h3 id="modalTitle" class="text-xl font-semibold mb-4">新增護理師</h3>
+            <input type="hidden" id="nurseIdInput"> <div class="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3 mb-3">
+                <div>
+                    <label for="nurseNameInput" class="block text-sm font-medium text-gray-700">護理師姓名:</label>
+                    <input type="text" id="nurseNameInput" class="mt-1 w-full p-2 border border-gray-300 rounded-md shadow-sm">
+                </div>
+                <div>
+                    <label for="nurseRoleInput" class="block text-sm font-medium text-gray-700">職責:</label>
+                    <select id="nurseRoleInput" class="mt-1 w-full p-2 border border-gray-300 rounded-md shadow-sm">
+                        <option value="member">Member</option>
+                        <option value="sub-leader">小Leader</option>
+                        <option value="leader">Leader</option>
+                    </select>
+                </div>
+            </div>
+
+
+            <div class="grid grid-cols-2 gap-x-4 gap-y-3 mb-3">
+                <div>
+                    <label for="nurseMinTotalShiftsInput" class="block text-sm font-medium text-gray-700">總班數下限:</label>
+                    <input type="number" id="nurseMinTotalShiftsInput" placeholder="無" min="0" class="mt-1 w-full p-2 border border-gray-300 rounded-md shadow-sm">
+                </div>
+                <div>
+                    <label for="nurseMaxTotalShiftsInput" class="block text-sm font-medium text-gray-700">總班數上限:</label>
+                    <input type="number" id="nurseMaxTotalShiftsInput" placeholder="無" min="0" class="mt-1 w-full p-2 border border-gray-300 rounded-md shadow-sm">
+                </div>
+                <div>
+                    <label for="nurseMinConsecutiveInput" class="block text-sm font-medium text-gray-700">連續上班下限:</label>
+                    <input type="number" id="nurseMinConsecutiveInput" placeholder="無 (預設2)" min="0" class="mt-1 w-full p-2 border border-gray-300 rounded-md shadow-sm">
+                </div>
+                <div>
+                    <label for="nurseMaxConsecutiveInput" class="block text-sm font-medium text-gray-700">連續上班上限:</label>
+                    <input type="number" id="nurseMaxConsecutiveInput" placeholder="無 (預設3)" min="0" class="mt-1 w-full p-2 border border-gray-300 rounded-md shadow-sm">
+                </div>
+                 <div>
+                    <label class="flex items-center mt-3">
+                        <input type="checkbox" id="nursePreviousMonthNightShiftInput" class="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50">
+                        <span class="ml-2 text-sm text-gray-600">上個月最後一天為夜班</span>
+                    </label>
+                </div>
+            </div>
+
+            <p class="text-sm font-medium text-gray-700 mb-1 mt-4">各班型上下限 (留空表示無限制):</p>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-x-4 gap-y-3 mb-3">
+                <div class="border p-2 rounded-md">
+                    <p class="text-xs font-semibold text-center text-gray-700 mb-1">D班 (08-16)</p>
+                    <label for="nurseMinDInput" class="block text-xs text-gray-600">下限:</label>
+                    <input type="number" id="nurseMinDInput" placeholder="無" min="0" class="mb-1 w-full p-1 border border-gray-300 rounded-md shadow-sm text-sm">
+                    <label for="nurseMaxDInput" class="block text-xs text-gray-600">上限:</label>
+                    <input type="number" id="nurseMaxDInput" placeholder="無" min="0" class="w-full p-1 border border-gray-300 rounded-md shadow-sm text-sm">
+                </div>
+                <div class="border p-2 rounded-md">
+                    <p class="text-xs font-semibold text-center text-gray-700 mb-1">E班 (16-00)</p>
+                    <label for="nurseMinEInput" class="block text-xs text-gray-600">下限:</label>
+                    <input type="number" id="nurseMinEInput" placeholder="無" min="0" class="mb-1 w-full p-1 border border-gray-300 rounded-md shadow-sm text-sm">
+                    <label for="nurseMaxEInput" class="block text-xs text-gray-600">上限:</label>
+                    <input type="number" id="nurseMaxEInput" placeholder="無" min="0" class="w-full p-1 border border-gray-300 rounded-md shadow-sm text-sm">
+                </div>
+                <div class="border p-2 rounded-md">
+                    <p class="text-xs font-semibold text-center text-gray-700 mb-1">N班 (00-08)</p>
+                    <label for="nurseMinNInput" class="block text-xs text-gray-600">下限:</label>
+                    <input type="number" id="nurseMinNInput" placeholder="無" min="0" class="mb-1 w-full p-1 border border-gray-300 rounded-md shadow-sm text-sm">
+                    <label for="nurseMaxNInput" class="block text-xs text-gray-600">上限:</label>
+                    <input type="number" id="nurseMaxNInput" placeholder="無" min="0" class="w-full p-1 border border-gray-300 rounded-md shadow-sm text-sm">
+                </div>
+                <div class="border p-2 rounded-md">
+                    <p class="text-xs font-semibold text-center text-gray-700 mb-1">假日/節慶班</p>
+                    <label for="nurseMinWeekendInput" class="block text-xs text-gray-600">下限:</label>
+                    <input type="number" id="nurseMinWeekendInput" placeholder="無" min="0" class="mb-1 w-full p-1 border border-gray-300 rounded-md shadow-sm text-sm">
+                    <label for="nurseMaxWeekendInput" class="block text-xs text-gray-600">上限:</label>
+                    <input type="number" id="nurseMaxWeekendInput" placeholder="無" min="0" class="w-full p-1 border border-gray-300 rounded-md shadow-sm text-sm">
+                </div>
+            </div>
+
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700">預休日期 (點選下方日曆):</label>
+                <div id="miniCalendarContainer" class="mt-1 p-2 border border-gray-300 rounded-md">
+                </div>
+            </div>
+
+            <button id="saveNurseBtn" class="bg-sky-500 hover:bg-sky-600 text-white font-semibold py-2 px-4 rounded-md shadow">儲存護理師資料</button>
+        </div>
+    </div>
+
+    <div id="unassignedReasonModal" class="modal">
+        <div class="modal-content">
+            <span class="close-button" onclick="closeUnassignedReasonModal()">&times;</span>
+            <h3 id="unassignedReasonModalTitle" class="text-xl font-semibold mb-4">無法排班原因</h3>
+            <ul id="unassignedReasonList" class="text-sm text-gray-700 list-disc pl-5">
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        // --- Global Variables and Constants ---
+        const SHIFT_DEFINITIONS = { // Updated for ICU Nurse
+            'D': { name: 'D班', time: '08:00-16:00', defaultRequired: 2, isNight: false, cssClass: 'D-shift', isDay: true, isEvening: false },
+            'E': { name: 'E班', time: '16:00-00:00', defaultRequired: 2, isNight: false, cssClass: 'E-shift', isDay: false, isEvening: true }, // E is an evening shift, not strictly night
+            'N': { name: 'N班', time: '00:00-08:00', defaultRequired: 2, isNight: true, cssClass: 'N-shift', isDay: false, isEvening: false }
+        };
+        const SHIFT_KEYS = Object.keys(SHIFT_DEFINITIONS);
+        const LOCAL_STORAGE_KEY = 'icuNurseSchedulerSettings_v1'; // Updated key
+        const IMPLICIT_MAX_CONSECUTIVE_WORK_DAYS_DEFAULT = 3;
+        const IMPLICIT_MIN_CONSECUTIVE_WORK_DAYS_DEFAULT = 2;
+
+        const TAIWAN_NATIONAL_HOLIDAYS = { // Kept for weekend/holiday calculations
+            2025: [
+                "2025-01-01", "2025-01-28", "2025-01-29", "2025-01-30", "2025-01-31",
+                "2025-02-28", "2025-04-04", "2025-04-05", "2025-05-01", "2025-05-31",
+                "2025-10-06", "2025-10-10"
+            ]
+            // Add more years as needed
+        };
+
+        let nurses = []; // Renamed from doctors
+        let nurseIdCounter = 0; // Renamed
+        let currentEditingNurseDaysOff = []; // Renamed
+        // Removed: currentEditingDoctorDesignatedShifts, currentDoctorIdForDesignatedShifts
+        let generatedScheduleData = null;
+        let unassignedSlotReasons = {};
+
+        // --- Initialization ---
+        document.addEventListener('DOMContentLoaded', () => {
+            populateYearMonthSelectors();
+            setupEventListeners();
+            if (!loadSettingsFromLocalStorage()) {
+                loadInitialNurses(); // Renamed
+            }
+            renderNursesList(); // Renamed
+        });
+
+        function setupEventListeners() {
+            document.getElementById('addNurseBtn').addEventListener('click', openNurseModalForAdd); // Renamed
+            document.getElementById('saveNurseBtn').addEventListener('click', saveNurse); // Renamed
+            document.getElementById('generate-schedule-btn').addEventListener('click', handleGenerateSchedule);
+
+            document.getElementById('saveSettingsBtn').addEventListener('click', saveSettingsToLocalStorage);
+            document.getElementById('loadSettingsBtn').addEventListener('click', () => {
+                if (loadSettingsFromLocalStorage()) {
+                    renderNursesList(); // Renamed
+                    alert('已從瀏覽器載入先前儲存的護理師設定。');
+                } else {
+                    alert('未找到儲存的設定，或載入失敗。');
+                }
+            });
+            document.getElementById('clearSavedSettingsBtn').addEventListener('click', clearSavedSettings);
+            document.getElementById('exportCsvBtn').addEventListener('click', exportScheduleToCSV);
+            // Removed listeners for preference checkboxes and designated shift modal
+        }
+
+        function populateYearMonthSelectors() {
+            const yearSelect = document.getElementById('year-select');
+            const monthSelect = document.getElementById('month-select');
+            const defaultYear = 2025;
+            const defaultMonth = new Date().getMonth() + 1; // Default to current month for convenience
+
+            for (let i = defaultYear - 1; i <= defaultYear + 5; i++) { // Allow previous year too
+                const option = document.createElement('option');
+                option.value = i;
+                option.textContent = i;
+                if (i === defaultYear) option.selected = true;
+                yearSelect.appendChild(option);
+            }
+
+            for (let i = 1; i <= 12; i++) {
+                const option = document.createElement('option');
+                option.value = i;
+                option.textContent = `${i}月`;
+                if (i === defaultMonth) option.selected = true;
+                monthSelect.appendChild(option);
+            }
+        }
+
+        function loadInitialNurses() { // Renamed
+            nurses = []; // Cleared initial list
+            // Add default nurse objects if needed for testing, or leave empty
+            // Example:
+            // nurses.push(createNurseObject("護理師A", { role: 'member', minTotalShifts: 10, ...}, {}, "", null));
+            updateNurseIdCounter(); // Renamed
+        }
+
+        // --- Local Storage Functions ---
+        function saveSettingsToLocalStorage() {
+            try {
+                // Also save shift requirements
+                const settingsToSave = {
+                    nurses: nurses,
+                    shiftRequirements: {
+                        D: parseInt(document.getElementById('minNursesD').value) || SHIFT_DEFINITIONS.D.defaultRequired,
+                        E: parseInt(document.getElementById('minNursesE').value) || SHIFT_DEFINITIONS.E.defaultRequired,
+                        N: parseInt(document.getElementById('minNursesN').value) || SHIFT_DEFINITIONS.N.defaultRequired,
+                    }
+                };
+                localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(settingsToSave));
+                alert('護理師及班表設定已儲存到您的瀏覽器!');
+            } catch (e) {
+                console.error("Error saving to localStorage:", e);
+                alert('儲存設定失敗，您的瀏覽器可能不支援或空間已滿。');
+            }
+        }
+
+        function loadSettingsFromLocalStorage() {
+            try {
+                const savedData = localStorage.getItem(LOCAL_STORAGE_KEY);
+                if (savedData) {
+                    const parsedData = JSON.parse(savedData);
+                    
+                    // Load nurses
+                    if (parsedData.nurses) {
+                        nurses = parsedData.nurses.map(nurseData => {
+                            // Basic re-creation, ensure all fields are present or defaulted
+                            const baseConstraints = {
+                                minTotalShifts: null, maxTotalShifts: null,
+                                minConsecutiveWorkDays: null, maxConsecutiveWorkDays: null,
+                                minShiftsPerType: {}, maxShiftsPerType: {},
+                                minWeekendShifts: null, maxWeekendShifts: null
+                            };
+                            SHIFT_KEYS.forEach(sk => {
+                                baseConstraints.minShiftsPerType[sk] = null;
+                                baseConstraints.maxShiftsPerType[sk] = null;
+                            });
+
+                            const constraints = {
+                                minTotalShifts: nurseData.constraints?.minTotalShifts !== undefined ? nurseData.constraints.minTotalShifts : baseConstraints.minTotalShifts,
+                                maxTotalShifts: nurseData.constraints?.maxTotalShifts !== undefined ? nurseData.constraints.maxTotalShifts : baseConstraints.maxTotalShifts,
+                                minConsecutiveWorkDays: nurseData.constraints?.minConsecutiveWorkDays !== undefined ? nurseData.constraints.minConsecutiveWorkDays : baseConstraints.minConsecutiveWorkDays,
+                                maxConsecutiveWorkDays: nurseData.constraints?.maxConsecutiveWorkDays !== undefined ? nurseData.constraints.maxConsecutiveWorkDays : baseConstraints.maxConsecutiveWorkDays,
+                                minShiftsPerType: {},
+                                maxShiftsPerType: {},
+                                minWeekendShifts: nurseData.constraints?.minWeekendShifts !== undefined ? nurseData.constraints.minWeekendShifts : baseConstraints.minWeekendShifts,
+                                maxWeekendShifts: nurseData.constraints?.maxWeekendShifts !== undefined ? nurseData.constraints.maxWeekendShifts : baseConstraints.maxWeekendShifts,
+                            };
+                            SHIFT_KEYS.forEach(sk => {
+                                constraints.minShiftsPerType[sk] = nurseData.constraints?.minShiftsPerType?.[sk] !== undefined ? nurseData.constraints.minShiftsPerType[sk] : baseConstraints.minShiftsPerType[sk];
+                                constraints.maxShiftsPerType[sk] = nurseData.constraints?.maxShiftsPerType?.[sk] !== undefined ? nurseData.constraints.maxShiftsPerType[sk] : baseConstraints.maxShiftsPerType[sk];
+                            });
+
+                            const basePreferences = { previousMonthNightShift: false }; // Simplified
+                            const preferences = {
+                                previousMonthNightShift: nurseData.preferences?.previousMonthNightShift || basePreferences.previousMonthNightShift,
+                                // Removed other preferences
+                            };
+                            const daysOffArray = Array.isArray(nurseData.daysOff) ? nurseData.daysOff : (nurseData.daysOff ? String(nurseData.daysOff).split(',').map(d => d.trim()).filter(d => d) : []);
+
+                            return {
+                                id: nurseData.id || `nurse_${nurseIdCounter++}`, // Renamed prefix
+                                name: nurseData.name || "未命名護理師",
+                                role: nurseData.role || 'member', // Added role
+                                constraints: constraints,
+                                preferences: preferences,
+                                daysOff: daysOffArray,
+                                currentShifts: 0,
+                                currentShiftsPerType: SHIFT_KEYS.reduce((acc, key) => { acc[key] = 0; return acc; }, {}),
+                                currentWeekendShifts: 0,
+                                currentConsecutiveWorkDays: 0,
+                                assignedShiftsDetails: []
+                            };
+                        });
+                    } else {
+                        nurses = []; // Fallback if nurses array is not in saved data
+                    }
+                    updateNurseIdCounter(); // Renamed
+
+                    // Load shift requirements
+                    if (parsedData.shiftRequirements) {
+                        document.getElementById('minNursesD').value = parsedData.shiftRequirements.D || SHIFT_DEFINITIONS.D.defaultRequired;
+                        document.getElementById('minNursesE').value = parsedData.shiftRequirements.E || SHIFT_DEFINITIONS.E.defaultRequired;
+                        document.getElementById('minNursesN').value = parsedData.shiftRequirements.N || SHIFT_DEFINITIONS.N.defaultRequired;
+                    }
+                    return true;
+                }
+            } catch (e) {
+                console.error("Error loading from localStorage:", e);
+                localStorage.removeItem(LOCAL_STORAGE_KEY);
+            }
+            return false;
+        }
+
+        function clearSavedSettings() {
+            if (confirm("確定要清除所有已儲存的護理師及班表設定嗎？此動作無法復原。")) {
+                localStorage.removeItem(LOCAL_STORAGE_KEY);
+                nurses = [];
+                loadInitialNurses(); // Renamed
+                renderNursesList(); // Renamed
+                // Reset shift requirement inputs to default
+                document.getElementById('minNursesD').value = SHIFT_DEFINITIONS.D.defaultRequired;
+                document.getElementById('minNursesE').value = SHIFT_DEFINITIONS.E.defaultRequired;
+                document.getElementById('minNursesN').value = SHIFT_DEFINITIONS.N.defaultRequired;
+                alert("已清除儲存的設定，並載入預設。");
+            }
+        }
+
+        function updateNurseIdCounter() { // Renamed
+            if (nurses.length > 0) {
+                const maxIdNum = nurses.reduce((max, nurse) => {
+                    const idNum = parseInt(String(nurse.id).replace('nurse_', '')); // Renamed prefix
+                    return isNaN(idNum) ? max : Math.max(max, idNum);
+                }, -1);
+                nurseIdCounter = maxIdNum + 1;
+            } else {
+                nurseIdCounter = 0;
+            }
+        }
+
+        // --- Nurse Modal Logic --- (Renamed from Doctor Modal)
+        function openNurseModalForAdd() {
+            document.querySelectorAll('#nurseModal input[type="number"]').forEach(inp => {
+                inp.value = '';
+                delete inp.dataset.originalValue;
+            });
+
+            document.getElementById('modalTitle').textContent = '新增護理師';
+            document.getElementById('nurseIdInput').value = '';
+            document.getElementById('nurseNameInput').value = '';
+            document.getElementById('nurseRoleInput').value = 'member'; // Default role
+
+            document.getElementById('nurseMinTotalShiftsInput').value = "";
+            document.getElementById('nurseMaxTotalShiftsInput').value = "";
+            document.getElementById('nurseMinConsecutiveInput').value = "";
+            document.getElementById('nurseMaxConsecutiveInput').value = "";
+            document.getElementById('nursePreviousMonthNightShiftInput').checked = false;
+
+            SHIFT_KEYS.forEach(sk => {
+                const minInput = document.getElementById(`nurseMin${sk}Input`);
+                const maxInput = document.getElementById(`nurseMax${sk}Input`);
+                if (minInput) minInput.value = "";
+                if (maxInput) maxInput.value = "";
+                if (minInput) minInput.dataset.originalValue = "";
+                if (maxInput) maxInput.dataset.originalValue = "";
+            });
+            const minWeekendInput = document.getElementById('nurseMinWeekendInput');
+            const maxWeekendInput = document.getElementById('nurseMaxWeekendInput');
+            minWeekendInput.value = "";
+            maxWeekendInput.value = "";
+            minWeekendInput.dataset.originalValue = "";
+            maxWeekendInput.dataset.originalValue = "";
+
+            currentEditingNurseDaysOff = [];
+            const scheduleYear = parseInt(document.getElementById('year-select').value);
+            const scheduleMonth = parseInt(document.getElementById('month-select').value);
+            renderMiniCalendar('miniCalendarContainer', scheduleYear, scheduleMonth, currentEditingNurseDaysOff);
+
+            document.getElementById('nurseModal').style.display = 'block';
+        }
+
+        function openNurseModalForEdit(nurseId) { // Renamed
+            const nurse = nurses.find(n => n.id === nurseId);
+            if (!nurse) return;
+
+            document.getElementById('modalTitle').textContent = '編輯護理師資料';
+            document.getElementById('nurseIdInput').value = nurse.id;
+            document.getElementById('nurseNameInput').value = nurse.name;
+            document.getElementById('nurseRoleInput').value = nurse.role || 'member';
+
+            document.getElementById('nurseMinTotalShiftsInput').value = nurse.constraints.minTotalShifts === null ? "" : nurse.constraints.minTotalShifts;
+            document.getElementById('nurseMaxTotalShiftsInput').value = nurse.constraints.maxTotalShifts === 999 || nurse.constraints.maxTotalShifts === null ? "" : nurse.constraints.maxTotalShifts;
+            document.getElementById('nurseMinConsecutiveInput').value = nurse.constraints.minConsecutiveWorkDays === null || nurse.constraints.minConsecutiveWorkDays === IMPLICIT_MIN_CONSECUTIVE_WORK_DAYS_DEFAULT ? "" : nurse.constraints.minConsecutiveWorkDays;
+            document.getElementById('nurseMaxConsecutiveInput').value = nurse.constraints.maxConsecutiveWorkDays === 999 || nurse.constraints.maxConsecutiveWorkDays === IMPLICIT_MAX_CONSECUTIVE_WORK_DAYS_DEFAULT || nurse.constraints.maxConsecutiveWorkDays === null ? "" : nurse.constraints.maxConsecutiveWorkDays;
+            document.getElementById('nursePreviousMonthNightShiftInput').checked = nurse.preferences.previousMonthNightShift;
+
+            SHIFT_KEYS.forEach(st => {
+                const minInput = document.getElementById(`nurseMin${st}Input`);
+                const maxInput = document.getElementById(`nurseMax${st}Input`);
+                if (minInput) {
+                    minInput.value = nurse.constraints.minShiftsPerType[st] === null ? "" : nurse.constraints.minShiftsPerType[st];
+                    minInput.dataset.originalValue = minInput.value;
+                }
+                if (maxInput) {
+                    maxInput.value = nurse.constraints.maxShiftsPerType[st] === 999 || nurse.constraints.maxShiftsPerType[st] === null ? "" : nurse.constraints.maxShiftsPerType[st];
+                    maxInput.dataset.originalValue = maxInput.value;
+                }
+            });
+            const minWeekendInput = document.getElementById('nurseMinWeekendInput');
+            const maxWeekendInput = document.getElementById('nurseMaxWeekendInput');
+            minWeekendInput.value = nurse.constraints.minWeekendShifts === null ? "" : nurse.constraints.minWeekendShifts;
+            maxWeekendInput.value = nurse.constraints.maxWeekendShifts === 999 || nurse.constraints.maxWeekendShifts === null ? "" : nurse.constraints.maxWeekendShifts;
+            minWeekendInput.dataset.originalValue = minWeekendInput.value;
+            maxWeekendInput.dataset.originalValue = maxWeekendInput.value;
+
+            currentEditingNurseDaysOff = [...nurse.daysOff];
+            const scheduleYear = parseInt(document.getElementById('year-select').value);
+            const scheduleMonth = parseInt(document.getElementById('month-select').value);
+            renderMiniCalendar('miniCalendarContainer', scheduleYear, scheduleMonth, currentEditingNurseDaysOff);
+
+            document.getElementById('nurseModal').style.display = 'block';
+        }
+
+        function closeNurseModal() { // Renamed
+            document.getElementById('nurseModal').style.display = 'none';
+            document.getElementById('miniCalendarContainer').innerHTML = '';
+            currentEditingNurseDaysOff = [];
+        }
+        function closeUnassignedReasonModal() {
+            document.getElementById('unassignedReasonModal').style.display = 'none';
+        }
+
+        window.onclick = function(event) {
+            const nurseModal = document.getElementById('nurseModal');
+            const reasonModal = document.getElementById('unassignedReasonModal');
+            // Removed designatedShiftModal and shiftSelector logic
+
+            if (event.target == nurseModal) closeNurseModal();
+            if (event.target == reasonModal) closeUnassignedReasonModal();
+            
+            const swapDropdown = document.querySelector('.nurse-swap-dropdown');
+            if (swapDropdown && swapDropdown.style.display === 'block' && !swapDropdown.contains(event.target) && !event.target.classList.contains('nurse-tag')) {
+                closeAllSwapDropdowns();
+            }
+        }
+
+        function parseInputAsIntOrNull(value, defaultIfInvalid = null) {
+            if (value === "" || value === null || value === undefined) return null;
+            const parsed = parseInt(value);
+            return (isNaN(parsed) || parsed < 0) ? defaultIfInvalid : parsed;
+        }
+
+        function createNurseObject(name, role, constraintsData, preferencesData, daysOffString, id = null) { // Renamed, added role
+            const daysOffArray = daysOffString ? String(daysOffString).split(',').map(d => d.trim()).filter(d => d) : [];
+
+            const finalMinShiftsPerType = {};
+            const finalMaxShiftsPerType = {};
+
+            SHIFT_KEYS.forEach(sk => {
+                finalMinShiftsPerType[sk] = parseInputAsIntOrNull(constraintsData[`min${sk}`]);
+                finalMaxShiftsPerType[sk] = parseInputAsIntOrNull(constraintsData[`max${sk}`], 999);
+            });
+
+            let minTotalShiftsValue = parseInputAsIntOrNull(constraintsData.minTotalShifts);
+            let maxTotalShiftsValue = parseInputAsIntOrNull(constraintsData.maxTotalShifts, 999);
+
+            return {
+                id: id === null ? `nurse_${nurseIdCounter++}` : id, // Renamed prefix
+                name: name,
+                role: role || 'member', // Added role
+                constraints: {
+                    minTotalShifts: minTotalShiftsValue,
+                    maxTotalShifts: maxTotalShiftsValue,
+                    minConsecutiveWorkDays: parseInputAsIntOrNull(constraintsData.minConsecutiveWorkDays, IMPLICIT_MIN_CONSECUTIVE_WORK_DAYS_DEFAULT),
+                    maxConsecutiveWorkDays: parseInputAsIntOrNull(constraintsData.maxConsecutiveWorkDays, IMPLICIT_MAX_CONSECUTIVE_WORK_DAYS_DEFAULT),
+                    minShiftsPerType: finalMinShiftsPerType,
+                    maxShiftsPerType: finalMaxShiftsPerType,
+                    minWeekendShifts: parseInputAsIntOrNull(constraintsData.minWeekendShifts),
+                    maxWeekendShifts: parseInputAsIntOrNull(constraintsData.maxWeekendShifts, 999),
+                },
+                preferences: { // Simplified
+                    previousMonthNightShift: preferencesData.previousMonthNightShift || false,
+                },
+                daysOff: daysOffArray,
+                currentShifts: 0,
+                currentShiftsPerType: SHIFT_KEYS.reduce((acc, key) => { acc[key] = 0; return acc; }, {}),
+                currentWeekendShifts: 0,
+                currentConsecutiveWorkDays: 0,
+                assignedShiftsDetails: []
+            };
+        }
+
+        function saveNurse() { // Renamed
+            const id = document.getElementById('nurseIdInput').value;
+            const name = document.getElementById('nurseNameInput').value.trim();
+            const role = document.getElementById('nurseRoleInput').value; // Get role
+            if (!name) {
+                alert('護理師姓名不能為空!');
+                return;
+            }
+
+            const constraintsData = {
+                minTotalShifts: document.getElementById('nurseMinTotalShiftsInput').value,
+                maxTotalShifts: document.getElementById('nurseMaxTotalShiftsInput').value,
+                minConsecutiveWorkDays: document.getElementById('nurseMinConsecutiveInput').value,
+                maxConsecutiveWorkDays: document.getElementById('nurseMaxConsecutiveInput').value,
+                minWeekendShifts: document.getElementById('nurseMinWeekendInput').value,
+                maxWeekendShifts: document.getElementById('nurseMaxWeekendInput').value,
+            };
+            SHIFT_KEYS.forEach(sk => {
+                const minInput = document.getElementById(`nurseMin${sk}Input`);
+                const maxInput = document.getElementById(`nurseMax${sk}Input`);
+                if (minInput) constraintsData[`min${sk}`] = minInput.value;
+                if (maxInput) constraintsData[`max${sk}`] = maxInput.value;
+            });
+
+            const preferencesData = { // Simplified
+                previousMonthNightShift: document.getElementById('nursePreviousMonthNightShiftInput').checked,
+            };
+            const daysOffDataString = currentEditingNurseDaysOff.join(',');
+
+            if (id) {
+                const nurseIndex = nurses.findIndex(n => n.id === id);
+                if (nurseIndex > -1) {
+                    nurses[nurseIndex] = createNurseObject(name, role, constraintsData, preferencesData, daysOffDataString, id);
+                }
+            } else {
+                nurses.push(createNurseObject(name, role, constraintsData, preferencesData, daysOffDataString, null));
+            }
+            updateNurseIdCounter(); // Renamed
+            renderNursesList(); // Renamed
+            closeNurseModal(); // Renamed
+        }
+
+        function deleteNurse(nurseId) { // Renamed
+            if (confirm('確定要刪除這位護理師嗎?')) {
+                nurses = nurses.filter(n => n.id !== nurseId);
+                renderNursesList(); // Renamed
+            }
+        }
+
+        function renderNursesList() { // Renamed
+            const listElement = document.getElementById('nurses-list');
+            listElement.innerHTML = '';
+            if (nurses.length === 0) {
+                listElement.innerHTML = '<p class="text-gray-500">尚未新增任何護理師。</p>';
+                return;
+            }
+
+            nurses.forEach(nurse => {
+                const div = document.createElement('div');
+                div.className = 'p-3 bg-white border border-gray-200 rounded-md shadow-sm flex justify-between items-center';
+                const daysOffDisplay = nurse.daysOff.length > 0 ? nurse.daysOff.join(', ') : '無';
+
+                let preferencesText = [];
+                if (nurse.preferences.previousMonthNightShift) preferencesText.push('上月最後日夜班');
+                // Removed other preference text
+
+                const roleText = nurse.role === 'leader' ? 'Leader' : nurse.role === 'sub-leader' ? '小Leader' : 'Member';
+
+                const minTotal = nurse.constraints.minTotalShifts === null ? '-' : nurse.constraints.minTotalShifts;
+                const maxTotal = nurse.constraints.maxTotalShifts === 999 || nurse.constraints.maxTotalShifts === null ? '無上限' : nurse.constraints.maxTotalShifts;
+                const minWeekend = nurse.constraints.minWeekendShifts === null ? '-' : nurse.constraints.minWeekendShifts;
+                const maxWeekend = nurse.constraints.maxWeekendShifts === 999 || nurse.constraints.maxWeekendShifts === null ? '無上限' : nurse.constraints.maxWeekendShifts;
+                const minConsecutive = nurse.constraints.minConsecutiveWorkDays === null ? '-' : nurse.constraints.minConsecutiveWorkDays;
+                const maxConsecutive = nurse.constraints.maxConsecutiveWorkDays === 999 || nurse.constraints.maxConsecutiveWorkDays === null ? '無上限' : nurse.constraints.maxConsecutiveWorkDays;
+
+
+                div.innerHTML = `
+                    <div>
+                        <strong class="text-md text-blue-600">${nurse.name} (${roleText})</strong>
+                        <p class="text-xs text-gray-500">
+                            總班: ${minTotal}-${maxTotal},
+                            連上: ${minConsecutive}-${maxConsecutive},
+                            假日/節慶: ${minWeekend}-${maxWeekend} <br/>
+                            偏好: ${preferencesText.join(', ') || '無'}
+                            休假: ${daysOffDisplay}
+                        </p>
+                    </div>
+                    <div>
+                        <button onclick="openNurseModalForEdit('${nurse.id}')" class="text-sm bg-yellow-400 hover:bg-yellow-500 text-white py-1 px-2 rounded-md mr-2">編輯</button>
+                        <button onclick="deleteNurse('${nurse.id}')" class="text-sm bg-red-500 hover:bg-red-600 text-white py-1 px-2 rounded-md">刪除</button>
+                    </div>
+                `;
+                listElement.appendChild(div);
+            });
+        }
+
+        // --- Holiday Helper Functions ---
+        function isNationalHoliday(dateStr, year) {
+            const yearHolidays = TAIWAN_NATIONAL_HOLIDAYS[year];
+            if (yearHolidays) {
+                return yearHolidays.includes(dateStr);
+            }
+            return false;
+        }
+
+        function isWeekendOrHoliday(dateStr, year, month, day) {
+            const dayOfWeek = getDayOfWeek(year, month, day);
+            if (dayOfWeek === 0 || dayOfWeek === 6) { // Sunday or Saturday
+                return true;
+            }
+            return isNationalHoliday(dateStr, year);
+        }
+
+        // --- Mini Calendar for Days Off ---
+        function renderMiniCalendar(containerId, year, month, selectedDays) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+
+            const daysInMonth = getDaysInMonth(year, month);
+            const firstDayOfMonth = new Date(year, month - 1, 1).getDay(); // 0 (Sun) - 6 (Sat)
+            const monthNames = ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"];
+            const dayNames = ['日', '一', '二', '三', '四', '五', '六'];
+
+            const header = document.createElement('div');
+            header.className = 'calendar-header';
+            header.textContent = `${year}年 ${monthNames[month - 1]}`;
+            container.appendChild(header);
+
+            dayNames.forEach(name => {
+                const dayNameCell = document.createElement('div');
+                dayNameCell.className = 'calendar-day-name';
+                dayNameCell.textContent = name;
+                container.appendChild(dayNameCell);
+            });
+
+            for (let i = 0; i < firstDayOfMonth; i++) {
+                const emptyCell = document.createElement('div');
+                emptyCell.className = 'calendar-day empty';
+                container.appendChild(emptyCell);
+            }
+
+            for (let d = 1; d <= daysInMonth; d++) {
+                const dayCell = document.createElement('div');
+                dayCell.className = 'calendar-day';
+                dayCell.textContent = d;
+                const dateStr = formatDate(year, month, d);
+
+                const dayOfWeek = new Date(year, month - 1, d).getDay();
+                if (dayOfWeek === 0 || dayOfWeek === 6) { // Sunday or Saturday
+                    dayCell.classList.add('is-weekend');
+                }
+                if (isNationalHoliday(dateStr, year)) {
+                    dayCell.classList.add('is-national-holiday');
+                }
+
+                if (selectedDays.includes(dateStr)) {
+                    dayCell.classList.add('selected');
+                }
+
+                dayCell.addEventListener('click', () => {
+                    const index = currentEditingNurseDaysOff.indexOf(dateStr);
+                    if (index > -1) {
+                        currentEditingNurseDaysOff.splice(index, 1);
+                        dayCell.classList.remove('selected');
+                    } else {
+                        currentEditingNurseDaysOff.push(dateStr);
+                        dayCell.classList.add('selected');
+                    }
+                });
+                container.appendChild(dayCell);
+            }
+        }
+
+
+        // --- Scheduling Core Logic (generateSchedule, canWorkShift, comparators) ---
+        // Helper to get current shift requirements from UI inputs or defaults
+        function getCurrentShiftRequirements() {
+            return {
+                D: parseInt(document.getElementById('minNursesD').value) || SHIFT_DEFINITIONS.D.defaultRequired,
+                E: parseInt(document.getElementById('minNursesE').value) || SHIFT_DEFINITIONS.E.defaultRequired,
+                N: parseInt(document.getElementById('minNursesN').value) || SHIFT_DEFINITIONS.N.defaultRequired,
+            };
+        }
+        
+        function _calcContinuityScore (nurse, prevDateObj, currentShiftKey) {
+            const prevShiftType = getPreviousShiftTypeOnDate(nurse, prevDateObj);
+            if (!prevShiftType) return 0; 
+
+            let score = 0;
+            const currentShiftIsNight = SHIFT_DEFINITIONS[currentShiftKey].isNight;
+            const prevShiftIsNight = SHIFT_DEFINITIONS[prevShiftType].isNight;
+            const maxConsecutive = nurse.constraints.maxConsecutiveWorkDays === null || nurse.constraints.maxConsecutiveWorkDays === 999 ? IMPLICIT_MAX_CONSECUTIVE_WORK_DAYS_DEFAULT : nurse.constraints.maxConsecutiveWorkDays;
+            const minConsecutive = nurse.constraints.minConsecutiveWorkDays === null || nurse.constraints.minConsecutiveWorkDays === 0 ? IMPLICIT_MIN_CONSECUTIVE_WORK_DAYS_DEFAULT : nurse.constraints.minConsecutiveWorkDays;
+
+            // D->D, E->E, N->N is good
+            if (prevShiftType === currentShiftKey) {
+                 score += 10;
+            }
+            // D->E is good
+            if (prevShiftType === 'D' && currentShiftKey === 'E') {
+                score += 8;
+            }
+            // E->N is good
+            if (prevShiftType === 'E' && currentShiftKey === 'N') {
+                score += 8;
+            }
+            // N->D (next day, handled by canWorkShift) - this score is for same-day or adjacent continuity
+
+            // Prefer working within consecutive limits
+            if (nurse.currentConsecutiveWorkDays >= minConsecutive - 1 &&
+                nurse.currentConsecutiveWorkDays < maxConsecutive) {
+                score += (nurse.currentConsecutiveWorkDays + 1) * 2; 
+            } else if (nurse.currentConsecutiveWorkDays < minConsecutive -1) {
+                score +=1; 
+            }
+            return score;
+        }
+
+        function buildContinuityFirstComparator (year, month, day, shiftKey, assignedNursesForThisShiftSlot, totalRequiredForShiftSlot) {
+             // assignedNursesForThisShiftSlot: array of nurse IDs already in this specific date/shift
+             // totalRequiredForShiftSlot: total number of nurses needed for this date/shift
+            return function (a, b) {
+                const prevDateObj = (day > 1) ? new Date(year, month - 1, day - 1) : null;
+                
+                // Role-based prioritization (simplified for now, needs more robust logic for "1L or 2SL")
+                // This is a placeholder for more complex role logic.
+                // If the shift is not yet full and needs a leader/sub-leader, prioritize them.
+                let roleScoreA = 0;
+                let roleScoreB = 0;
+
+                const currentLeadersInSlot = assignedNursesForThisShiftSlot.map(id => nurses.find(n=>n.id===id)?.role).filter(r => r === 'leader').length;
+                const currentSubLeadersInSlot = assignedNursesForThisShiftSlot.map(id => nurses.find(n=>n.id===id)?.role).filter(r => r === 'sub-leader').length;
+                const remainingSlots = totalRequiredForShiftSlot - assignedNursesForThisShiftSlot.length;
+
+
+                // If this is the last slot to fill for the shift, the role constraint MUST be met
+                if (remainingSlots === 1) {
+                    const wouldMeetA = checkRoleConstraintIfAdded(a, assignedNursesForThisShiftSlot, totalRequiredForShiftSlot);
+                    const wouldMeetB = checkRoleConstraintIfAdded(b, assignedNursesForThisShiftSlot, totalRequiredForShiftSlot);
+                    if (wouldMeetA && !wouldMeetB) return -1; // A is better
+                    if (!wouldMeetA && wouldMeetB) return 1;  // B is better
+                } else { // Not the last slot, so it's a preference
+                    if (currentLeadersInSlot === 0 && currentSubLeadersInSlot < 2) {
+                        if (a.role === 'leader') roleScoreA += 20;
+                        if (b.role === 'leader') roleScoreB += 20;
+                        if (a.role === 'sub-leader') roleScoreA += 10;
+                        if (b.role === 'sub-leader') roleScoreB += 10;
+                    }
+                }
+                if (roleScoreA !== roleScoreB) return roleScoreB - roleScoreA;
+
+
+                const contA = prevDateObj ? _calcContinuityScore(a, prevDateObj, shiftKey) : 0;
+                const contB = prevDateObj ? _calcContinuityScore(b, prevDateObj, shiftKey) : 0;
+                if (contA !== contB) return contB - contA;
+
+                if (a.currentShifts !== b.currentShifts) return a.currentShifts - b.currentShifts;
+
+                const nightA = a.currentShiftsPerType['N'] || 0;
+                const nightB = b.currentShiftsPerType['N'] || 0;
+                if (nightA !== nightB) return nightA - nightB;
+
+                if (isWeekendOrHoliday(formatDate(year, month, day), year, month, day)) {
+                    if (a.currentWeekendShifts !== b.currentWeekendShifts) {
+                        return a.currentWeekendShifts - b.currentWeekendShifts;
+                    }
+                }
+                return Math.random() - 0.5;
+            };
+        }
+
+
+        function handleGenerateSchedule() {
+            if (nurses.length === 0) {
+                alert("請先新增護理師資料!");
+                return;
+            }
+            const year = parseInt(document.getElementById('year-select').value);
+            const month = parseInt(document.getElementById('month-select').value);
+
+            unassignedSlotReasons = {};
+
+            nurses.forEach(nurse => {
+                nurse.currentShifts = 0;
+                nurse.currentShiftsPerType = SHIFT_KEYS.reduce((acc, key) => { acc[key] = 0; return acc; }, {});
+                nurse.currentWeekendShifts = 0;
+                nurse.currentConsecutiveWorkDays = 0; // Reset this before each generation
+                nurse.assignedShiftsDetails = [];
+            });
+
+            generatedScheduleData = generateSchedule(year, month);
+            displaySchedule(generatedScheduleData, year, month);
+            displaySummary(nurses, year, month);
+        }
+
+        function getDaysInMonth(year, month) {
+            return new Date(year, month, 0).getDate();
+        }
+
+        function getDayOfWeek(year, month, day) { // 0 (Sun) to 6 (Sat)
+            return new Date(year, month - 1, day).getDay();
+        }
+
+        function formatDate(year, month, day) {
+            return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        }
+
+        function getPreviousShiftTypeOnDate(nurse, dateObject) {
+            if (!dateObject || dateObject.getDate() === 0) return null;
+            const dateStr = formatDate(dateObject.getFullYear(), dateObject.getMonth() + 1, dateObject.getDate());
+            const shiftDetail = nurse.assignedShiftsDetails.find(s => s.date === dateStr);
+            return shiftDetail ? shiftDetail.shiftType : null;
+        }
+        
+        // Helper to check role constraint if a nurse is added
+        function checkRoleConstraintIfAdded(candidateNurse, assignedIdsForShift, totalRequired) {
+            const tempAssignedRoles = assignedIdsForShift.map(id => nurses.find(n => n.id === id)?.role);
+            tempAssignedRoles.push(candidateNurse.role);
+
+            const leaders = tempAssignedRoles.filter(r => r === 'leader').length;
+            const subLeaders = tempAssignedRoles.filter(r => r === 'sub-leader').length;
+
+            if (tempAssignedRoles.length === totalRequired) { // Only check strictly if this is the last person
+                 return leaders >= 1 || subLeaders >= 2;
+            }
+            return true; // If not the last person, it's provisionally okay (preference handled in comparator)
+        }
+
+
+        function generateSchedule (year, month) {
+            const daysInMonth = getDaysInMonth(year, month);
+            let schedule = {};
+            unassignedSlotReasons = {};
+            const currentShiftNeeds = getCurrentShiftRequirements(); // Get UI defined needs
+
+            // Reset consecutive work days based on previous month's last N shift
+            nurses.forEach(nurse => {
+                if (nurse.preferences.previousMonthNightShift) {
+                    // If last day of prev month was N, they are "coming off" a night shift.
+                    // This means they can't work D or E on the 1st.
+                    // currentConsecutiveWorkDays should be 0 if they are off on the 1st,
+                    // or 1 if they work N on the 1st.
+                    // For simplicity, we'll let canWorkShift handle the 1st day restriction.
+                    // We assume currentConsecutiveWorkDays starts at 0 for the new month unless they work the 1st.
+                }
+            });
+
+
+            for (let day = 1; day <= daysInMonth; day++) {
+                const currentDateStr = formatDate(year, month, day);
+                if (!schedule[currentDateStr]) schedule[currentDateStr] = {};
+                if (!unassignedSlotReasons[currentDateStr]) unassignedSlotReasons[currentDateStr] = {};
+
+                let nursesWorkingTodayThisPass = new Set(); // Nurses assigned any shift on this specific day during this generation pass
+
+                SHIFT_KEYS.forEach((shiftKey) => {
+                    if (!schedule[currentDateStr][shiftKey]) schedule[currentDateStr][shiftKey] = [];
+                    if (!unassignedSlotReasons[currentDateStr][shiftKey]) unassignedSlotReasons[currentDateStr][shiftKey] = [];
+
+                    const shiftInfo = SHIFT_DEFINITIONS[shiftKey];
+                    const requiredForThisShift = currentShiftNeeds[shiftKey] || shiftInfo.defaultRequired;
+                    const slotsToFill = requiredForThisShift - schedule[currentDateStr][shiftKey].length;
+
+                    for (let slot = 0; slot < slotsToFill; slot++) {
+                        let slotSpecificReasonsForThisAttempt = [];
+                        
+                        let candidates = nurses.filter((nurse) => {
+                            if (schedule[currentDateStr][shiftKey].includes(nurse.id)) return false; // Already in this specific shift
+                            if (nursesWorkingTodayThisPass.has(nurse.id)) return false; // Already working another shift type today
+
+                            const check = canWorkShift(nurse, shiftKey, currentDateStr, year, month, day, nursesWorkingTodayThisPass);
+                            if (!check.canWork) slotSpecificReasonsForThisAttempt.push(`${nurse.name}: ${check.reason}`);
+                            return check.canWork;
+                        });
+                        
+                        // Pass current assignments for this shift to comparator for role checking
+                        candidates.sort(buildContinuityFirstComparator(year, month, day, shiftKey, schedule[currentDateStr][shiftKey], requiredForThisShift));
+
+
+                        const chosen = candidates[0];
+                        if (chosen) {
+                            schedule[currentDateStr][shiftKey].push(chosen.id);
+                            nursesWorkingTodayThisPass.add(chosen.id); // Mark as working today
+
+                            chosen.currentShifts++;
+                            chosen.currentShiftsPerType[shiftKey]++;
+                            chosen.assignedShiftsDetails.push({ date: currentDateStr, shiftType: shiftKey });
+                            if (isWeekendOrHoliday(currentDateStr, year, month, day)) chosen.currentWeekendShifts++;
+                            // chosen.currentConsecutiveWorkDays++; // This will be updated at end of day
+                        } else {
+                            schedule[currentDateStr][shiftKey].push('UNASSIGNED');
+                            const reasonSlotIndex = (schedule[currentDateStr][shiftKey].length -1) ; // current slot being processed
+                            if (!unassignedSlotReasons[currentDateStr][shiftKey][reasonSlotIndex]) {
+                                unassignedSlotReasons[currentDateStr][shiftKey][reasonSlotIndex] = [];
+                            }
+                            unassignedSlotReasons[currentDateStr][shiftKey][reasonSlotIndex].push(...slotSpecificReasonsForThisAttempt);
+                            if(unassignedSlotReasons[currentDateStr][shiftKey][reasonSlotIndex].length === 0) {
+                                unassignedSlotReasons[currentDateStr][shiftKey][reasonSlotIndex].push("無符合條件的護理師。");
+                            }
+                             // Add role requirement failure reason if applicable
+                            if (candidates.length > 0 && !chosen) { // Had candidates, but none chosen (likely due to final role check)
+                                const assignedSoFar = schedule[currentDateStr][shiftKey].filter(id => id !== 'UNASSIGNED');
+                                if (assignedSoFar.length === requiredForThisShift -1) { // This was the last slot
+                                     unassignedSlotReasons[currentDateStr][shiftKey][reasonSlotIndex].push("最後空位無法滿足Leader/小Leader組合。");
+                                }
+                            }
+                        }
+                    }
+                });
+                 // Update consecutive workdays for all nurses at the end of processing each day
+                nurses.forEach(nurse => {
+                    if (nursesWorkingTodayThisPass.has(nurse.id)) {
+                        nurse.currentConsecutiveWorkDays = (nurse.currentConsecutiveWorkDays || 0) + 1;
+                    } else {
+                        nurse.currentConsecutiveWorkDays = 0; // Reset if not working today
+                    }
+                });
+            }
+            // Final check for role constraints on all shifts
+            for (let day = 1; day <= daysInMonth; day++) {
+                const currentDateStr = formatDate(year, month, day);
+                SHIFT_KEYS.forEach(shiftKey => {
+                    const assignedToShift = schedule[currentDateStr][shiftKey].filter(id => id !== 'UNASSIGNED');
+                    const requiredCount = currentShiftNeeds[shiftKey] || SHIFT_DEFINITIONS[shiftKey].defaultRequired;
+                    
+                    if (assignedToShift.length === requiredCount && assignedToShift.length > 0) { // Only check if shift is fully staffed
+                        const leaders = assignedToShift.map(id => nurses.find(n => n.id === id)?.role).filter(r => r === 'leader').length;
+                        const subLeaders = assignedToShift.map(id => nurses.find(n => n.id === id)?.role).filter(r => r === 'sub-leader').length;
+
+                        if (!(leaders >= 1 || subLeaders >= 2)) {
+                            // This shift does not meet the role requirement.
+                            // Mark it or log it. For simplicity, we'll add to unassigned reasons for the last slot.
+                            const lastSlotIndex = requiredCount -1;
+                             if (!unassignedSlotReasons[currentDateStr]) unassignedSlotReasons[currentDateStr] = {};
+                             if (!unassignedSlotReasons[currentDateStr][shiftKey]) unassignedSlotReasons[currentDateStr][shiftKey] = {};
+                             if (!unassignedSlotReasons[currentDateStr][shiftKey][lastSlotIndex]) unassignedSlotReasons[currentDateStr][shiftKey][lastSlotIndex] = [];
+                             let reasonMsg = "班次未滿足 (1 Leader 或 2 小Leader) 的規定。";
+                             if (!unassignedSlotReasons[currentDateStr][shiftKey][lastSlotIndex].includes(reasonMsg)) {
+                                 unassignedSlotReasons[currentDateStr][shiftKey][lastSlotIndex].unshift(reasonMsg); // Add to beginning
+                             }
+                            console.warn(`班表警告: ${currentDateStr} ${shiftKey} 未滿足Leader/小Leader規定。 Leaders: ${leaders}, SubLeaders: ${subLeaders}`);
+                        }
+                    }
+                });
+            }
+            return schedule;
+        }
+
+
+        function canWorkShift(nurse, shiftKey, dateStr, year, month, day, nursesWorkingTodaySet) { // Added nursesWorkingTodaySet
+            const shiftInfo = SHIFT_DEFINITIONS[shiftKey];
+            let reason = "";
+            const minConsecutive = nurse.constraints.minConsecutiveWorkDays === null ? IMPLICIT_MIN_CONSECUTIVE_WORK_DAYS_DEFAULT : nurse.constraints.minConsecutiveWorkDays;
+            const maxConsecutive = nurse.constraints.maxConsecutiveWorkDays === null || nurse.constraints.maxConsecutiveWorkDays === 999 ? IMPLICIT_MAX_CONSECUTIVE_WORK_DAYS_DEFAULT : nurse.constraints.maxConsecutiveWorkDays;
+
+            if (nurse.daysOff.includes(dateStr)) {
+                reason = "預休"; return { canWork: false, reason: reason };
+            }
+
+            // Check if already working another shift type today
+            // This check is now primarily handled before calling canWorkShift using nursesWorkingTodaySet
+            // but as a safeguard:
+            if (nurse.assignedShiftsDetails.some(s => s.date === dateStr && s.shiftType !== shiftKey)) {
+                 reason = `已排當日其他班 (${nurse.assignedShiftsDetails.find(s => s.date === dateStr).shiftType})`; return { canWork: false, reason: reason };
+            }
+
+
+            if (day === 1 && nurse.preferences.previousMonthNightShift && (shiftInfo.isDay || shiftInfo.isEvening)) { // D or E
+                reason = "上月最後日夜班，本日不宜D/E班"; return { canWork: false, reason: reason };
+            }
+
+            if (nurse.constraints.maxTotalShifts !== null && nurse.constraints.maxTotalShifts !== 999 && nurse.currentShifts >= nurse.constraints.maxTotalShifts) {
+                reason = `總班數上限 (${nurse.constraints.maxTotalShifts})`; return { canWork: false, reason: reason };
+            }
+
+            if (nurse.constraints.maxShiftsPerType[shiftKey] !== null && nurse.constraints.maxShiftsPerType[shiftKey] !== 999 && nurse.currentShiftsPerType[shiftKey] >= nurse.constraints.maxShiftsPerType[shiftKey]) {
+                reason = `${shiftKey}班上限 (${nurse.constraints.maxShiftsPerType[shiftKey]})`; return { canWork: false, reason: reason };
+            }
+
+            // Removed specific preference checks (cannotWorkShiftTypes, onlyWorksShiftTypes)
+
+            if (isWeekendOrHoliday(dateStr, year, month, day)) {
+                 if (nurse.constraints.maxWeekendShifts !== null && nurse.constraints.maxWeekendShifts !== 999 && nurse.currentWeekendShifts >= nurse.constraints.maxWeekendShifts) {
+                    reason = `假日班上限 (${nurse.constraints.maxWeekendShifts})`; return { canWork: false, reason: reason };
+                 }
+            }
+
+            // Check consecutive working days (currentConsecutiveWorkDays is based on shifts up to *yesterday*)
+            if (nurse.currentConsecutiveWorkDays >= maxConsecutive) {
+                reason = `連續上班達上限 (${maxConsecutive}天)`; return { canWork: false, reason: reason };
+            }
+            
+            // Shift transition rules (N -> D/E, D -> N, E -> D)
+            if (day > 1) {
+                const prevCalDay = new Date(year, month - 1, day - 1);
+                const previousShiftType = getPreviousShiftTypeOnDate(nurse, prevCalDay);
+                if (previousShiftType) {
+                    const prevShiftInfo = SHIFT_DEFINITIONS[previousShiftType];
+                    // N -> D or N -> E is not allowed on consecutive days
+                    if (prevShiftInfo.isNight && (shiftInfo.isDay || shiftInfo.isEvening)) {
+                        reason = `避免夜班(${previousShiftType})後接D/E班(${shiftKey})`; return { canWork: false, reason: reason };
+                    }
+                    // D -> N is generally not allowed without a break
+                    if (prevShiftInfo.isDay && shiftInfo.isNight) {
+                         reason = `避免D班(${previousShiftType})後接N班(${shiftKey})`; return { canWork: false, reason: reason };
+                    }
+                    // E -> D is generally not allowed without a break
+                    if (prevShiftInfo.isEvening && shiftInfo.isDay) {
+                         reason = `避免E班(${previousShiftType})後接D班(${shiftKey})`; return { canWork: false, reason: reason };
+                    }
+                }
+            }
+            
+            // If current shift is Night (N)
+            if (shiftInfo.isNight) {
+                const tomorrow = new Date(year, month - 1, day + 1);
+                // Check if tomorrow is within the current month
+                if (tomorrow.getMonth() === month -1) {
+                    const tomorrowStr = formatDate(tomorrow.getFullYear(), tomorrow.getMonth() + 1, tomorrow.getDate());
+                    if (nurse.daysOff.includes(tomorrowStr)) {
+                        reason = `隔日預休 (${tomorrowStr})`; return { canWork: false, reason: reason };
+                    }
+                }
+            }
+
+
+            return { canWork: true, reason: null };
+        }
+
+        // --- Display Functions ---
+        function displaySchedule(schedule, year, month) {
+            const displayDiv = document.getElementById('schedule-display');
+            displayDiv.innerHTML = '';
+
+            const daysInMonth = getDaysInMonth(year, month);
+            const firstDayOfMonth = getDayOfWeek(year, month, 1); // 0 (Sun) - 6 (Sat)
+
+            let table = `<table class="min-w-full divide-y divide-gray-300 border border-gray-300">
+                            <thead class="bg-gray-100">
+                                <tr>`;
+            const dayNames = ['日', '一', '二', '三', '四', '五', '六'];
+            dayNames.forEach(dn => table += `<th class="py-3 px-2 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">${dn}</th>`);
+            table += `</tr></thead><tbody class="bg-white divide-y divide-gray-200">`;
+
+            let dayCounter = 1;
+            for (let i = 0; i < 6; i++) { // Max 6 rows for a month
+                if (dayCounter > daysInMonth && (i === 0 || ( (i*7 + 0 - firstDayOfMonth) >= daysInMonth && firstDayOfMonth !==0 ) ) ) break;
+                if (dayCounter > daysInMonth && firstDayOfMonth === 0 && i > 0) break;
+
+
+                table += '<tr>';
+                for (let j = 0; j < 7; j++) { // Days of the week
+                    let cellClasses = "py-2 px-1 border border-gray-200 align-top text-left";
+                    if (i === 0 && j < firstDayOfMonth) {
+                        table += `<td class="${cellClasses} bg-gray-50"></td>`; // Empty cell before month starts
+                    } else if (dayCounter <= daysInMonth) {
+                        const currentDateStr = formatDate(year, month, dayCounter);
+                        const dayShifts = schedule[currentDateStr] || {};
+
+                        const todayObj = new Date();
+                        if (year === todayObj.getFullYear() && month === (todayObj.getMonth() + 1) && dayCounter === todayObj.getDate()){
+                            cellClasses += ' today';
+                        }
+
+                        if (isNationalHoliday(currentDateStr, year)) {
+                            cellClasses += ' national-holiday';
+                        } else if (j === 0 || j === 6) { // Sunday or Saturday
+                            cellClasses += ' weekend';
+                        }
+
+                        let cellContent = `<div class="font-semibold ${ (year === todayObj.getFullYear() && month === (todayObj.getMonth() + 1) && dayCounter === todayObj.getDate()) ? 'text-blue-600' : ''}">${dayCounter}</div>`;
+                        
+                        const currentShiftNeeds = getCurrentShiftRequirements();
+
+                        SHIFT_KEYS.forEach(shiftKey => {
+                            const assignedSlots = dayShifts[shiftKey] || [];
+                            const shiftInfo = SHIFT_DEFINITIONS[shiftKey];
+                            const requiredForThisShift = currentShiftNeeds[shiftKey] || shiftInfo.defaultRequired;
+
+                            cellContent += `<div class="text-xs mt-1"><strong>${shiftKey}:</strong> `;
+                            for(let slotIndex = 0; slotIndex < requiredForThisShift; slotIndex++) {
+                                const assignee = assignedSlots[slotIndex];
+                                if (assignee === 'UNASSIGNED') {
+                                    cellContent += `<span class="nurse-tag unassigned-shift">未分配</span>
+                                                    <span class="unassigned-reason-icon" onclick="showUnassignedReasons('${currentDateStr}', '${shiftKey}', ${slotIndex})">?</span>`;
+                                } else if (assignee) {
+                                    const nurse = nurses.find(n => n.id === assignee);
+                                    let tagClass = shiftInfo.cssClass;
+                                    // Removed designated marker logic
+                                    cellContent += `<span class="nurse-tag ${tagClass}" onclick="showNurseSwapOptions(event, '${currentDateStr}', '${shiftKey}', ${slotIndex}, '${assignee}')">${nurse ? nurse.name.substring(0,3) : '錯誤'}</span>`;
+                                } else {
+                                     // This case implies fewer assignees than required, but slot exists.
+                                     // Could happen if generateSchedule didn't fill all required slots.
+                                     // For display, we can show it as an empty potential slot or a placeholder.
+                                     // If an "UNASSIGNED" wasn't pushed, it means the loop in display didn't reach it.
+                                     // This should ideally be handled by generateSchedule pushing "UNASSIGNED"
+                                }
+                            }
+                            cellContent += `</div>`;
+                        });
+
+                        table += `<td class="${cellClasses}"><div class="table-cell-content">${cellContent}</div></td>`;
+                        dayCounter++;
+                    } else {
+                        table += `<td class="${cellClasses} bg-gray-50"></td>`; // Empty cell after month ends
+                    }
+                }
+                table += '</tr>';
+                if (dayCounter > daysInMonth && i > 0) break; 
+            }
+            table += '</tbody></table>';
+            displayDiv.innerHTML = table;
+        }
+
+        function showUnassignedReasons(dateStr, shiftKey, slotIndex) {
+            const reasons = unassignedSlotReasons[dateStr]?.[shiftKey]?.[slotIndex] || ["未記錄原因或所有護理師均已排班。"];
+            const modal = document.getElementById('unassignedReasonModal');
+            const title = document.getElementById('unassignedReasonModalTitle');
+            const list = document.getElementById('unassignedReasonList');
+
+            title.textContent = `${dateStr} ${SHIFT_DEFINITIONS[shiftKey].name} (位置 ${slotIndex + 1}) 無法排班原因:`;
+            list.innerHTML = reasons.map(reason => `<li>${escapeCSV(reason)}</li>`).join(''); // escapeCSV for safety
+            modal.style.display = 'block';
+        }
+
+        let currentSwapDetails = null; 
+
+        function showNurseSwapOptions(event, dateStr, shiftKey, slotIndex, currentNurseId) { // Renamed
+            event.stopPropagation(); 
+            closeAllSwapDropdowns(); 
+
+            const currentNurseTag = event.target;
+            const dropdown = document.createElement('div');
+            dropdown.className = 'nurse-swap-dropdown'; // Renamed class
+            
+            currentSwapDetails = { dateStr, shiftKey, slotIndex, oldNurseId: currentNurseId, dropdownElement: dropdown };
+
+            const currentNurse = nurses.find(n => n.id === currentNurseId);
+            // Removed designated shift check
+
+            const availableNursesForSwap = nurses.filter(nurse => {
+                if (nurse.id === currentNurseId) return false; 
+                
+                const year = parseInt(dateStr.substring(0,4));
+                const month = parseInt(dateStr.substring(5,7));
+                const dayOfMonth = parseInt(dateStr.substring(8,10));
+
+                // Check if the nurse is already working another shift on the same day
+                let workingAnotherShiftToday = false;
+                if (generatedScheduleData && generatedScheduleData[dateStr]) {
+                    for (const sk_check in generatedScheduleData[dateStr]) {
+                        if (sk_check !== shiftKey && generatedScheduleData[dateStr][sk_check].includes(nurse.id)) {
+                            workingAnotherShiftToday = true;
+                            break;
+                        }
+                    }
+                }
+                if (workingAnotherShiftToday) return false;
+
+                // Create a temporary state for the nurse to check canWorkShift
+                // This is a simplified check; a full check would involve recalculating their stats
+                // as if they were taking this shift.
+                const tempNurseForCheck = JSON.parse(JSON.stringify(nurse)); // Deep copy for temporary check
+                // Simulate adding this shift to check constraints like max per type, total, etc.
+                // This is a rough check. A more accurate check would involve temporarily assigning the shift
+                // and then running canWorkShift. For simplicity, we rely on canWorkShift's internal logic.
+                const canWorkCheck = canWorkShift(tempNurseForCheck, shiftKey, dateStr, year, month, dayOfMonth, new Set()); // Pass empty set as it's a one-off check
+                return canWorkCheck.canWork;
+            });
+
+            if (availableNursesForSwap.length === 0) {
+                const noOptionDiv = document.createElement('div');
+                noOptionDiv.textContent = '無其他合適護理師';
+                dropdown.appendChild(noOptionDiv);
+            } else {
+                availableNursesForSwap.forEach(nurse => {
+                    const optionDiv = document.createElement('div');
+                    optionDiv.textContent = `${nurse.name} (${nurse.role})`;
+                    optionDiv.onclick = (e) => {
+                        e.stopPropagation();
+                        handleNurseSwap(dateStr, shiftKey, slotIndex, currentNurseId, nurse.id); // Renamed
+                        closeAllSwapDropdowns();
+                    };
+                    dropdown.appendChild(optionDiv);
+                });
+            }
+            
+            const rect = currentNurseTag.getBoundingClientRect();
+            dropdown.style.top = `${rect.bottom + window.scrollY}px`;
+            dropdown.style.left = `${rect.left + window.scrollX}px`;
+            document.body.appendChild(dropdown);
+        }
+        
+        function willExceedConsecutiveLimitOnSwap(nurse, dateStrToConsider, year, month) {
+            const maxCons = nurse.constraints.maxConsecutiveWorkDays === null ||
+                            nurse.constraints.maxConsecutiveWorkDays === 999
+                            ? IMPLICIT_MAX_CONSECUTIVE_WORK_DAYS_DEFAULT
+                            : nurse.constraints.maxConsecutiveWorkDays;
+
+            // Create a set of all dates the nurse is scheduled to work, including the new one
+            const workedDates = new Set(nurse.assignedShiftsDetails.map(s => s.date));
+            workedDates.add(dateStrToConsider);
+
+            let currentStreak = 0;
+            let maxObservedStreak = 0;
+
+            for (let d = 1; d <= getDaysInMonth(year, month); d++) {
+                const dayStr = formatDate(year, month, d);
+                if (workedDates.has(dayStr)) {
+                    currentStreak++;
+                } else {
+                    maxObservedStreak = Math.max(maxObservedStreak, currentStreak);
+                    currentStreak = 0;
+                }
+            }
+            maxObservedStreak = Math.max(maxObservedStreak, currentStreak); // Check streak at end of month
+
+            return maxObservedStreak > maxCons;
+        }
+
+
+        function handleNurseSwap(dateStr, shiftKey, slotIndex, oldNurseId, newNurseId) { // Renamed
+            const year = parseInt(dateStr.substring(0,4));
+            const month = parseInt(dateStr.substring(5,7));
+            const dayOfMonth = parseInt(dateStr.substring(8,10));
+            const newNurse = nurses.find(n => n.id === newNurseId);
+            const oldNurse = nurses.find(n => n.id === oldNurseId);
+
+            // Create a temporary copy of the new nurse to test `canWorkShift` accurately
+            // without permanently altering their stats until the swap is confirmed.
+            let tempNewNurse = JSON.parse(JSON.stringify(newNurse));
+            // Simulate current stats for the check
+            tempNewNurse.currentShifts = newNurse.currentShifts;
+            tempNewNurse.currentShiftsPerType = {...newNurse.currentShiftsPerType};
+            tempNewNurse.currentWeekendShifts = newNurse.currentWeekendShifts;
+            tempNewNurse.currentConsecutiveWorkDays = newNurse.currentConsecutiveWorkDays; // Use current consecutive days up to yesterday
+            tempNewNurse.assignedShiftsDetails = [...newNurse.assignedShiftsDetails];
+
+
+            const canNewNurseWorkCheck = canWorkShift(tempNewNurse, shiftKey, dateStr, year, month, dayOfMonth, new Set()); // Pass empty set for focused check
+
+            if (!canNewNurseWorkCheck.canWork) {
+                alert(`無法替換：${newNurse.name} ${canNewNurseWorkCheck.reason}`);
+                return;
+            }
+            
+            // Additional check for consecutive limit specifically for the swap
+            if (willExceedConsecutiveLimitOnSwap(newNurse, dateStr, year, month)) {
+                 alert(`無法替換：${newNurse.name} 將會超過最大連續上班天數。`);
+                 return;
+            }
+            
+            // Check role constraint for the swap
+            const shiftAssignmentsBeforeSwap = generatedScheduleData[dateStr][shiftKey].filter(id => id !== oldNurseId);
+            const totalRequired = (getCurrentShiftRequirements()[shiftKey] || SHIFT_DEFINITIONS[shiftKey].defaultRequired);
+            if (!checkRoleConstraintIfAdded(newNurse, shiftAssignmentsBeforeSwap, totalRequired)) {
+                 alert(`無法替換：加入 ${newNurse.name} (${newNurse.role}) 將違反 Leader/小Leader 規定。`);
+                 return;
+            }
+
+
+            // Proceed with swap
+            const shiftAssignments = generatedScheduleData[dateStr][shiftKey];
+            const oldNurseIndexInSlot = shiftAssignments.indexOf(oldNurseId);
+            if (oldNurseIndexInSlot !== -1) {
+                shiftAssignments[oldNurseIndexInSlot] = newNurseId;
+            } else {
+                // This case should ideally not happen if oldNurseId was correctly identified in the slot
+                shiftAssignments[slotIndex] = newNurseId;
+            }
+
+            // Update stats for oldNurse
+            if (oldNurse) {
+                oldNurse.currentShifts--;
+                oldNurse.currentShiftsPerType[shiftKey]--;
+                oldNurse.assignedShiftsDetails = oldNurse.assignedShiftsDetails.filter(s => !(s.date === dateStr && s.shiftType === shiftKey));
+                if (isWeekendOrHoliday(dateStr, year, month, dayOfMonth)) oldNurse.currentWeekendShifts--;
+                // Recalculate consecutive days for oldNurse (simplified: assume it might break a streak)
+                // A full recalculation of consecutive days for the entire month for oldNurse would be more accurate.
+                // For now, we'll rely on the next full schedule generation or summary to have the most accurate consecutive count.
+                // Let's do a quick recalculation for the old nurse for the current day's impact
+                let oldNurseWorkingTodayAfterSwap = oldNurse.assignedShiftsDetails.some(s => s.date === dateStr);
+                if (!oldNurseWorkingTodayAfterSwap) { // If they are no longer working today
+                    // This logic is tricky because currentConsecutiveWorkDays is usually based on *yesterday*
+                    // For simplicity, the summary function will provide the accurate max consecutive.
+                }
+
+            }
+
+            // Update stats for newNurse
+            newNurse.currentShifts++;
+            newNurse.currentShiftsPerType[shiftKey]++;
+            newNurse.assignedShiftsDetails.push({ date: dateStr, shiftType: shiftKey });
+            if (isWeekendOrHoliday(dateStr, year, month, dayOfMonth)) newNurse.currentWeekendShifts++;
+            // Recalculate consecutive days for newNurse (similar simplification as above)
+
+            // Re-calculate consecutive days for both affected nurses for the whole month for accuracy
+            [oldNurse, newNurse].forEach(n => {
+                if (!n) return;
+                n.currentConsecutiveWorkDays = 0; // Reset and recalculate from start of month
+                let tempConsecutive = 0;
+                for (let d_scan = 1; d_scan <= getDaysInMonth(year, month); d_scan++) {
+                    const scanDateStr = formatDate(year, month, d_scan);
+                    if (n.assignedShiftsDetails.some(s => s.date === scanDateStr)) {
+                        tempConsecutive++;
+                        if (scanDateStr === dateStr) { // For the day of the swap
+                             n.currentConsecutiveWorkDays = tempConsecutive; // Update based on this new assignment
+                        }
+                    } else {
+                        if (scanDateStr < dateStr) { // If before swap day and not working, reset
+                             n.currentConsecutiveWorkDays = 0;
+                        }
+                        tempConsecutive = 0;
+                    }
+                }
+                 // If the swap day is the last day they work in a streak, currentConsecutiveWorkDays is already set.
+                 // If they work after swap day, this simple logic might not capture the true "current" for the next day's scheduling.
+                 // The most robust way is to recalculate max consecutive in summary.
+            });
+
+
+            displaySchedule(generatedScheduleData, year, month);
+            displaySummary(nurses, year, month);
+            alert(`${oldNurse ? oldNurse.name : '護理師'} 已被 ${newNurse.name} 替換於 ${dateStr} 的 ${shiftKey} 班。`);
+        }
+
+
+        function closeAllSwapDropdowns() { // Renamed
+            const dropdowns = document.querySelectorAll('.nurse-swap-dropdown'); // Renamed class
+            dropdowns.forEach(d => d.remove());
+            currentSwapDetails = null;
+        }
+        document.addEventListener('click', (event) => {
+            if (currentSwapDetails && currentSwapDetails.dropdownElement && !currentSwapDetails.dropdownElement.contains(event.target)) {
+                if (!event.target.classList.contains('nurse-tag')) { // Renamed class
+                    closeAllSwapDropdowns();
+                }
+            }
+        });
+
+
+        function displaySummary(docs, currentYear, currentMonth) {
+            const summaryDiv = document.getElementById('summary-panel');
+            summaryDiv.innerHTML = '';
+
+            let table = `<table class="min-w-full divide-y divide-gray-300 border border-gray-300">
+                            <thead class="bg-gray-100">
+                                <tr>
+                                    <th class="py-3 px-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">護理師 (職責)</th>
+                                    <th class="py-3 px-4 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">總班數 (下/上)</th>`;
+            SHIFT_KEYS.forEach(sk => table += `<th class="py-3 px-2 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">${sk} (下/上)</th>`);
+            table += `          <th class="py-3 px-4 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">N班總數</th>
+                                    <th class="py-3 px-4 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">假日/節慶班 (下/上)</th>
+                                    <th class="py-3 px-4 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">最大連上 (下/上)</th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200">`;
+
+            const daysInSelectedMonth = getDaysInMonth(currentYear, currentMonth);
+
+            docs.forEach(doc => {
+                let maxConsecutiveForDoc = 0;
+                let consecutiveCounter = 0;
+                // Correctly calculate max consecutive days based on assignedShiftsDetails for the current month
+                const uniqueDatesWorked = new Set();
+                doc.assignedShiftsDetails.forEach(s => {
+                    const shiftDate = new Date(s.date);
+                    if (shiftDate.getFullYear() === currentYear && shiftDate.getMonth() === currentMonth - 1) {
+                        uniqueDatesWorked.add(s.date);
+                    }
+                });
+
+                for (let d = 1; d <= daysInSelectedMonth; d++) {
+                    const dateStr = formatDate(currentYear, currentMonth, d);
+                    if (uniqueDatesWorked.has(dateStr)) {
+                        consecutiveCounter++;
+                    } else {
+                        maxConsecutiveForDoc = Math.max(maxConsecutiveForDoc, consecutiveCounter);
+                        consecutiveCounter = 0;
+                    }
+                }
+                maxConsecutiveForDoc = Math.max(maxConsecutiveForDoc, consecutiveCounter); // Check at the end of the month
+                doc.summaryMaxConsecutive = maxConsecutiveForDoc;
+                doc.summaryTotalNightShifts = doc.currentShiftsPerType['N'] || 0; // Only N is night shift
+            });
+
+
+            docs.forEach(nurse => {
+                const minTotal = nurse.constraints.minTotalShifts === null ? '-' : nurse.constraints.minTotalShifts;
+                const maxTotal = nurse.constraints.maxTotalShifts === 999 || nurse.constraints.maxTotalShifts === null ? '無' : nurse.constraints.maxTotalShifts;
+                const minConsecutive = nurse.constraints.minConsecutiveWorkDays === null ? '-' : nurse.constraints.minConsecutiveWorkDays;
+                const maxConsecutiveConstraint = nurse.constraints.maxConsecutiveWorkDays === 999 || nurse.constraints.maxConsecutiveWorkDays === null ? '無' : nurse.constraints.maxConsecutiveWorkDays;
+                const roleText = nurse.role === 'leader' ? 'L' : nurse.role === 'sub-leader' ? 'sL' : 'M';
+
+                table += `<tr>
+                                <td class="py-2 px-4 whitespace-nowrap text-sm font-medium text-gray-900">${nurse.name} (${roleText})</td>
+                                <td class="py-2 px-4 whitespace-nowrap text-sm text-gray-700 text-center">${nurse.currentShifts} (${minTotal}/${maxTotal})</td>`;
+                SHIFT_KEYS.forEach(sk => {
+                    const minSk = nurse.constraints.minShiftsPerType[sk] === null ? '-' : nurse.constraints.minShiftsPerType[sk];
+                    const maxSk = nurse.constraints.maxShiftsPerType[sk] === 999 || nurse.constraints.maxShiftsPerType[sk] === null ? '無' : nurse.constraints.maxShiftsPerType[sk];
+                    table += `<td class="py-2 px-2 whitespace-nowrap text-sm text-gray-700 text-center">${nurse.currentShiftsPerType[sk] || 0} (${minSk}/${maxSk})</td>`;
+                });
+                table += `  <td class="py-2 px-4 whitespace-nowrap text-sm text-gray-700 text-center">${nurse.summaryTotalNightShifts}</td>`;
+                const minWeekend = nurse.constraints.minWeekendShifts === null ? '-' : nurse.constraints.minWeekendShifts;
+                const maxWeekend = nurse.constraints.maxWeekendShifts === 999 || nurse.constraints.maxWeekendShifts === null ? '無' : nurse.constraints.maxWeekendShifts;
+                table += `  <td class="py-2 px-4 whitespace-nowrap text-sm text-gray-700 text-center">${nurse.currentWeekendShifts} (${minWeekend}/${maxWeekend})</td>
+                                <td class="py-2 px-4 whitespace-nowrap text-sm text-gray-700 text-center">${nurse.summaryMaxConsecutive} (${minConsecutive}/${maxConsecutiveConstraint})</td>
+                              </tr>`;
+            });
+
+            table += `</tbody></table>`;
+            summaryDiv.innerHTML = table;
+        }
+
+        // --- CSV Export Function ---
+        function escapeCSV(value) {
+            if (value === null || value === undefined) return "";
+            let strValue = String(value);
+            if (strValue.includes(',') || strValue.includes('\n') || strValue.includes('"')) {
+                strValue = strValue.replace(/"/g, '""'); // Escape double quotes
+                return `"${strValue}"`;
+            }
+            return strValue;
+        }
+        function formatCSVTextCell(value) { // To ensure Excel treats it as text
+            if (value === null || value === undefined) return "''";
+            let strValue = String(value);
+            return escapeCSV(`'${strValue}`); // Prepend with single quote for Excel
+        }
+
+        function exportScheduleToCSV() {
+            if (!generatedScheduleData) {
+                alert("請先產生班表後再匯出。");
+                return;
+            }
+            if (nurses.length === 0) {
+                alert("沒有護理師資料可匯出。");
+                return;
+            }
+
+            const year = parseInt(document.getElementById('year-select').value);
+            const month = parseInt(document.getElementById('month-select').value);
+            const daysInMonth = getDaysInMonth(year, month);
+            const dayNamesShort = ['日', '一', '二', '三', '四', '五', '六'];
+
+            let csvContent = [];
+            const BOM = "\uFEFF"; // Byte Order Mark for UTF-8
+
+            csvContent.push(escapeCSV(`ICU護理師班表 - ${year}年 ${String(month).padStart(2, '0')}月`));
+
+            let dateHeaderRow = [escapeCSV("護理師姓名 (職責)")];
+            for (let day = 1; day <= daysInMonth; day++) {
+                dateHeaderRow.push(escapeCSV(`${String(month).padStart(2, '0')}/${String(day).padStart(2, '0')}`));
+            }
+            csvContent.push(dateHeaderRow.join(','));
+
+            let dayOfWeekHeaderRow = [""]; // Empty for the first column
+            for (let day = 1; day <= daysInMonth; day++) {
+                dayOfWeekHeaderRow.push(escapeCSV(dayNamesShort[getDayOfWeek(year, month, day)]));
+            }
+            csvContent.push(dayOfWeekHeaderRow.join(','));
+
+            nurses.forEach(nurse => {
+                const roleText = nurse.role === 'leader' ? 'L' : nurse.role === 'sub-leader' ? 'sL' : 'M';
+                let row = [escapeCSV(`${nurse.name} (${roleText})`)];
+                for (let day = 1; day <= daysInMonth; day++) {
+                    const dateStr = formatDate(year, month, day);
+                    let shiftTypeForNurseOnDate = "";
+                    if (generatedScheduleData[dateStr]) {
+                        for (const shiftKey in generatedScheduleData[dateStr]) {
+                            if (generatedScheduleData[dateStr][shiftKey].includes(nurse.id)) {
+                                shiftTypeForNurseOnDate = shiftKey;
+                                break;
+                            }
+                        }
+                    }
+                    row.push(escapeCSV(shiftTypeForNurseOnDate));
+                }
+                csvContent.push(row.join(','));
+            });
+
+            // Add summary table to CSV
+            csvContent.push(""); // Empty line separator
+            csvContent.push(escapeCSV("護理師排班統計"));
+
+            const summaryHeaders = ["護理師 (職責)", "總班數 (下/上)", ...SHIFT_KEYS.map(sk => `${sk} (下/上)`), "N班總數", "假日/節慶班 (下/上)", "最大連上 (下/上)"];
+            csvContent.push(summaryHeaders.map(h => escapeCSV(h)).join(','));
+
+            nurses.forEach(nurse => {
+                const minTotal = nurse.constraints.minTotalShifts === null ? '-' : nurse.constraints.minTotalShifts;
+                const maxTotal = nurse.constraints.maxTotalShifts === 999 || nurse.constraints.maxTotalShifts === null ? '無' : nurse.constraints.maxTotalShifts;
+                const totalNightShifts = nurse.summaryTotalNightShifts || 0; // From displaySummary calculation
+                const minConsecutive = nurse.constraints.minConsecutiveWorkDays === null ? '-' : nurse.constraints.minConsecutiveWorkDays;
+                const maxConsecutiveConstraint = nurse.constraints.maxConsecutiveWorkDays === 999 || nurse.constraints.maxConsecutiveWorkDays === null ? '無' : nurse.constraints.maxConsecutiveWorkDays;
+                 const roleText = nurse.role === 'leader' ? 'L' : nurse.role === 'sub-leader' ? 'sL' : 'M';
+
+
+                let row = [
+                    escapeCSV(`${nurse.name} (${roleText})`),
+                    formatCSVTextCell(`${nurse.currentShifts} (${minTotal}/${maxTotal})`)
+                ];
+                SHIFT_KEYS.forEach(sk => {
+                    const minSk = nurse.constraints.minShiftsPerType[sk] === null ? '-' : nurse.constraints.minShiftsPerType[sk];
+                    const maxSk = nurse.constraints.maxShiftsPerType[sk] === 999 || nurse.constraints.maxShiftsPerType[sk] === null ? '無' : nurse.constraints.maxShiftsPerType[sk];
+                    row.push(formatCSVTextCell(`${nurse.currentShiftsPerType[sk] || 0} (${minSk}/${maxSk})`));
+                });
+                row.push(formatCSVTextCell(totalNightShifts));
+                const minWeekend = nurse.constraints.minWeekendShifts === null ? '-' : nurse.constraints.minWeekendShifts;
+                const maxWeekend = nurse.constraints.maxWeekendShifts === 999 || nurse.constraints.maxWeekendShifts === null ? '無' : nurse.constraints.maxWeekendShifts;
+                row.push(formatCSVTextCell(`${nurse.currentWeekendShifts} (${minWeekend}/${maxWeekend})`));
+                row.push(formatCSVTextCell(`${nurse.summaryMaxConsecutive || 0} (${minConsecutive}/${maxConsecutiveConstraint})`));
+                csvContent.push(row.join(','));
+            });
+
+
+            const csvString = BOM + csvContent.join('\n');
+            const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement("a");
+            if (link.download !== undefined) {
+                const url = URL.createObjectURL(blob);
+                link.setAttribute("href", url);
+                link.setAttribute("download", `ICU_Nurse_Schedule_${year}_${String(month).padStart(2, '0')}.csv`);
+                link.style.visibility = 'hidden';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            } else {
+                alert("您的瀏覽器不支援自動下載，請手動複製內容。");
+            }
+        }
+
+    </script>
+</body>
+</html>
